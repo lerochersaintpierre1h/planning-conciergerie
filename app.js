@@ -23,6 +23,7 @@ function app() {
     calendarMonths: [],
     reservations: [],
     donnees: {},
+    donneesParAnnee: {}, // Ligne à ajouter
     comptaData: {},
     
     showModalClient: false,
@@ -61,6 +62,7 @@ function app() {
       db.collection("locations").doc("rocher1H").onSnapshot((doc) => {
         if (doc.exists) {
           if (doc.data().donnees) this.donnees = doc.data().donnees;
+          if (doc.data().donneesParAnnee) this.donneesParAnnee = doc.data().donneesParAnnee; // Ligne à ajouter
           if (doc.data().comptaData) this.comptaData = doc.data().comptaData; 
           this.renderCalendar();
         }
@@ -303,8 +305,11 @@ function app() {
     },
 
     isDateClosed(dateStr) {
-      if (!this.donnees.fermetures) return false;
-      return this.donnees.fermetures.some(f => f.debut && f.fin && dateStr >= f.debut && dateStr <= f.fin);
+      if (!dateStr) return false;
+      const yr = dateStr.split('-')[0];
+      const dSettings = (this.donneesParAnnee && this.donneesParAnnee[yr]) ? this.donneesParAnnee[yr] : this.donnees;
+      if (!dSettings || !dSettings.fermetures) return false;
+      return dSettings.fermetures.some(f => f.debut && f.fin && dateStr >= f.debut && dateStr <= f.fin);
     },
 
     getColorForRes(res, isClosed) {
