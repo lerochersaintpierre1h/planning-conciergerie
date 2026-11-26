@@ -23,7 +23,7 @@ function app() {
     calendarMonths: [],
     reservations: [],
     donnees: {},
-    donneesParAnnee: {}, // Ligne à ajouter
+    donneesParAnnee: {},
     comptaData: {},
     
     showModalClient: false,
@@ -62,7 +62,7 @@ function app() {
       db.collection("locations").doc("rocher1H").onSnapshot((doc) => {
         if (doc.exists) {
           if (doc.data().donnees) this.donnees = doc.data().donnees;
-          if (doc.data().donneesParAnnee) this.donneesParAnnee = doc.data().donneesParAnnee; // Ligne à ajouter
+          if (doc.data().donneesParAnnee) this.donneesParAnnee = doc.data().donneesParAnnee;
           if (doc.data().comptaData) this.comptaData = doc.data().comptaData; 
           this.renderCalendar();
         }
@@ -82,6 +82,7 @@ function app() {
 
     get comptaMetrics() {
       const yr = String(this.currentYear);
+      const currentD = (this.donneesParAnnee && this.donneesParAnnee[yr]) ? this.donneesParAnnee[yr] : this.donnees;
       const yearRes = this.reservations.filter(r => r.dateDebut && r.dateDebut.startsWith(yr));
       
       const nbMenages = yearRes.filter(r => String(r.forceMenageNon).toLowerCase().trim() !== 'oui').length;
@@ -89,10 +90,16 @@ function app() {
       const totalMenagesConciergerie = nbMenages + menageEnPlus;
       
       const nbRemiseCles = yearRes.filter(r => String(r.codeTarif).toLowerCase().trim() !== 'perso' && String(r.origine).toLowerCase().trim() !== 'perso').length;
+      const nbRemiseLinge = yearRes.filter(r => this.hasLinge(r)).length;
       
-      const totalMenageEuros = totalMenagesConciergerie * (Number(this.donnees.prixReelMenage) || 60);
-      const totalRemiseClesEuros = nbRemiseCles * (Number(this.donnees.prixRemiseCle) || 60);
-      const coutTotalConciergerie = totalMenageEuros + totalRemiseClesEuros;
+      const prixMenage = Number(currentD.prixReelMenage) || 60;
+      const prixCle = Number(currentD.prixRemiseCle) || 60;
+      const prixLinge = currentD.prixRemiseLinge !== undefined ? Number(currentD.prixRemiseLinge) : 10;
+
+      const totalMenageEuros = totalMenagesConciergerie * prixMenage;
+      const totalRemiseClesEuros = nbRemiseCles * prixCle;
+      const totalRemiseLingeEuros = nbRemiseLinge * prixLinge;
+      const coutTotalConciergerie = totalMenageEuros + totalRemiseClesEuros + totalRemiseLingeEuros;
       
       const paiementsRecus = (Number(this.comptaYearData.paiementConciergerie1) || 0) + 
                              (Number(this.comptaYearData.paiementConciergerie2) || 0) + 
@@ -101,7 +108,17 @@ function app() {
                              
       const resteARecevoir = Math.max(0, coutTotalConciergerie - paiementsRecus);
       
-      return { totalMenagesConciergerie, totalMenageEuros, nbRemiseCles, totalRemiseClesEuros, coutTotalConciergerie, paiementsRecus, resteARecevoir };
+      return { 
+        totalMenagesConciergerie, 
+        totalMenageEuros, 
+        nbRemiseCles, 
+        totalRemiseClesEuros, 
+        nbRemiseLinge, 
+        totalRemiseLingeEuros, 
+        coutTotalConciergerie, 
+        paiementsRecus, 
+        resteARecevoir 
+      };
     },
 
     formatCurrency(val) { return (Number(val) || 0).toFixed(2) + ' €'; },
@@ -110,21 +127,30 @@ function app() {
 
     // --- EXPORT PDF INSTANTANÉ AVEC TEXTE CENTRÉ ---
     printPlanning() {
-      const nomC = (this.donnees && this.donnees.nomConciergerie) ? this.donnees.nomConciergerie.trim() : 'Conciergerie';
+      const yr = String(this.currentYear);
+      const currentD = (this.donneesParAnnee && this.donneesParAnnee[yr]) ? this.donneesParAnnee[yr] : this.donnees;
+      const nomC = (currentD && currentD.nomConciergerie) ? currentD.nomConciergerie.trim() : 'Conciergerie';
       const fileName = `Planning-Conciergerie-${nomC}-${this.currentYear}`;
 
       const rows = this.getPlanningConciergerieData();
       let rowsHtml = '';
+
+      const getOptionStyle = (val) => {
+        if (val === 'Oui') return 'color: #047857; font-weight: bold; font-size: 9px;';
+        if (val === 'Non') return 'color: #000000; font-weight: normal; font-size: 7.5px;';
+        return 'color: #64748b; font-weight: normal; font-size: 8px;';
+      };
       
       rows.forEach(r => {
         const bgStyle = !r.res ? 'background-color: #ffffff;' : (r.isNonStandard ? 'background-color: #cbd5e1;' : 'background-color: #f1f5f9;');
         const clientName = r.res ? `${r.res.nom} ${r.res.prenom || ''}` : '-';
         const tel = r.res ? (r.res.telephone || '') : '';
         const pays = r.res ? (r.res.pays || '') : '';
-        const kit = r.kitBebe || '-';
         
-        const styleRemise = (r.remiseCle === 'Oui') ? 'color: #047857; font-weight: bold;' : 'color: #334155;';
-        const styleMenage = (r.menage === 'Oui') ? 'color: #047857; font-weight: bold;' : 'color: #334155;';
+        const kit = r.kitBebe || '-';
+        const remise = r.remiseCle || '-';
+        const menage = r.menage || '-';
+        const linge = r.linge || '-';
 
         rowsHtml += `
           <tr style="${bgStyle}">
@@ -133,9 +159,10 @@ function app() {
             <td style="border: 1px solid #94a3b8; padding: 2px 4px; font-weight: 600; text-align: center;">${clientName}</td>
             <td style="border: 1px solid #94a3b8; padding: 2px 4px; text-align: center;">${tel}</td>
             <td style="border: 1px solid #94a3b8; padding: 2px 4px; text-align: center;">${pays}</td>
-            <td style="border: 1px solid #94a3b8; padding: 2px 4px; text-align: center; font-weight: bold; color: #334155;">${kit}</td>
-            <td style="border: 1px solid #94a3b8; padding: 2px 4px; text-align: center; text-transform: uppercase; ${styleRemise}">${r.remiseCle}</td>
-            <td style="border: 1px solid #94a3b8; padding: 2px 4px; text-align: center; text-transform: uppercase; ${styleMenage}">${r.menage}</td>
+            <td style="border: 1px solid #94a3b8; padding: 2px 4px; text-align: center; text-transform: uppercase; ${getOptionStyle(kit)}">${kit}</td>
+            <td style="border: 1px solid #94a3b8; padding: 2px 4px; text-align: center; text-transform: uppercase; ${getOptionStyle(remise)}">${remise}</td>
+            <td style="border: 1px solid #94a3b8; padding: 2px 4px; text-align: center; text-transform: uppercase; ${getOptionStyle(menage)}">${menage}</td>
+            <td style="border: 1px solid #94a3b8; padding: 2px 4px; text-align: center; text-transform: uppercase; ${getOptionStyle(linge)}">${linge}</td>
           </tr>
         `;
       });
@@ -170,6 +197,7 @@ function app() {
                 <th style="border: 1px solid #94a3b8; padding: 4px; text-align: center;">Kit Bébé</th>
                 <th style="border: 1px solid #94a3b8; padding: 4px; text-align: center;">Remise Clé</th>
                 <th style="border: 1px solid #94a3b8; padding: 4px; text-align: center;">Ménage</th>
+                <th style="border: 1px solid #94a3b8; padding: 4px; text-align: center;">Linge</th>
               </tr>
             </thead>
             <tbody>
@@ -228,6 +256,15 @@ function app() {
       }, 50);
     },
 
+    get nextReservation() {
+      const now = new Date();
+      const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+      return [...this.reservations]
+        .filter(r => r.dateDebut && r.dateDebut >= todayISO)
+        .sort((a, b) => a.dateDebut.localeCompare(b.dateDebut))[0] || null;
+    },
+
     getPlanningConciergerieData() {
       const yr = this.currentYear;
       let d = new Date(yr, 0, 1);
@@ -256,6 +293,7 @@ function app() {
             kitBebe: currentRes.kitBebe === 'oui' ? 'Oui' : 'Non',
             remiseCle: this.isPerso(currentRes) ? 'Non' : 'Oui',
             menage: currentRes.forceMenageNon === 'oui' ? 'Non' : 'Oui',
+            linge: this.hasLinge(currentRes) ? 'Oui' : 'Non',
             isNonStandard: isNonStandard
           });
           const [y, m, day] = currentRes.dateFin.split('-').map(Number);
@@ -282,6 +320,7 @@ function app() {
             kitBebe: '-',
             remiseCle: '-',
             menage: '-',
+            linge: '-',
             isNonStandard: false
           });
           d = endFree;
@@ -295,6 +334,14 @@ function app() {
       const fullName = (res.nom + ' ' + (res.prenom || '')).toLowerCase().trim();
       const reverseName = ((res.prenom || '') + ' ' + res.nom).toLowerCase().trim();
       return fullName === 'indispo perso' || reverseName === 'indispo perso';
+    },
+
+    hasLinge(res) {
+      if (!res || this.isPerso(res)) return false;
+      return (Number(res.nbLitDouble) || 0) > 0 ||
+             (Number(res.nbLitSimple) || 0) > 0 ||
+             (Number(res.nbServiette) || 0) > 0 ||
+             (Number(res.nbTapis) || 0) > 0;
     },
 
     getReservationStatus(res) {
